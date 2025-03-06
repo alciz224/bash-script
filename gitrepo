@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Check if gh is installed
+if ! command -v gh &> /dev/null; then
+    echo "GitHub CLI (gh) is not installed. Install it and try again."
+    exit 1
+fi
+
+# Prompt for repository name and description
+read -p "Enter repository name: " REPO_NAME
+read -p "Enter repository description: " REPO_DESC
+
+# Create GitHub repository with 'main' as the default branch
+gh repo create "$REPO_NAME" --public --description "$REPO_DESC" --default-branch main --push
+
+echo "Repository '$REPO_NAME' created and pushed successfully!"

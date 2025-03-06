@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# Check if gh is installed
+if ! command -v gh &> /dev/null
+then
+    echo "GitHub CLI (gh) is not installed. Install it and try again."
+    exit 1
+fi
+
+# Prompt for repository name and description
+read -p "Enter repository name: " REPO_NAME
+read -p "Enter repository description: " REPO_DESC
+
+# Create GitHub repository
+gh repo create "$REPO_NAME" --public --description "$REPO_DESC"
+
+# Initialize Git and push
+git init
+git branch -m master main
+git remote add origin "git@github.com:$(gh auth status 2>/dev/null | grep -oP 'Logged in to github.com as \K\S+'):${REPO_NAME}.git"
+echo "# $REPO_NAME" > README.md
+git add README.md
+git commit -m "Initial commit"
+git push -u origin main
+
+echo "Repository '$REPO_NAME' created and pushed successfully!"

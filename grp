@@ -1,0 +1,188 @@
+#!/bin/bash
+
+# Function to display usage
+function display_usage {
+    echo "Usage: $0 [options]"
+    echo "Options:"
+    echo "  -c, --current-dir    Use the current directory for the repository"
+    echo "  -n, --new-dir        Create a new directory for the repository (default)"
+    echo "  -h, --help           Display this help message"
+    exit 1
+}
+
+# Default option - create new directory
+USE_CURRENT_DIR=false
+
+# Parse command line arguments
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -c|--current-dir) USE_CURRENT_DIR=true ;;
+        -n|--new-dir) USE_CURRENT_DIR=false ;;
+        -h|--help) display_usage ;;
+        *) echo "Unknown parameter: $1"; display_usage ;;
+    esac
+    shift
+done
+
+# Check if gh is installed
+if ! command -v gh &> /dev/null
+then
+    echo "GitHub CLI (gh) is not installed. Install it with 'pkg install gh' and try again."
+    exit 1
+fi
+
+# Check if git is installed
+if ! command -v git &> /dev/null
+then
+    echo "Git is not installed. Install it with 'pkg install git' and try again."
+    exit 1
+fi
+
+# Check for SSH key
+if [ ! -f ~/.ssh/id_rsa ] && [ ! -f ~/.ssh/id_ed25519 ]; then
+    echo "No SSH key found. Please ensure your SSH key is properly set up."
+    echo "You can create one with: ssh-keygen -t ed25519 -C 'your_email@example.com'"
+    exit 1
+fi
+
+# Check if already authenticated with GitHub
+if ! gh auth status &>/dev/null; then
+    echo "Please authenticate with GitHub first using 'gh auth login'"
+    echo "Choose SSH as the authentication method and point to your SSH key"
+    exit 1
+fi
+
+# Get GitHub username
+GITHUB_USER=$(gh api user | grep -o '"login": *"[^"]*"' | cut -d'"' -f4)
+if [ -z "$GITHUB_USER" ]; then
+    echo "Could not determine GitHub username. Please ensure you're properly authenticated."
+    exit 1
+fi
+
+# Determine repo name based on whether using current directory or new directory
+if [ "$USE_CURRENT_DIR" = true ]; then
+    # For current directory, suggest the current directory name as the repo name
+    DEFAULT_REPO_NAME=$(basename "$(pwd)")
+    read -p "Enter repository name [$DEFAULT_REPO_NAME]: " REPO_NAME
+    REPO_NAME=${REPO_NAME:-$DEFAULT_REPO_NAME}
+else
+    # For new directory, just ask for the name
+    read -p "Enter repository name: " REPO_NAME
+fi
+
+read -p "Enter repository description (optional): " REPO_DESC
+
+# Confirm creation
+echo -e "\nAbout to create a new public repository: $REPO_NAME"
+echo "Owner: $GITHUB_USER"
+echo "Description: $REPO_DESC"
+if [ "$USE_CURRENT_DIR" = true ]; then
+    echo "Using current directory: $(pwd)"
+else
+    echo "Creating new directory: $REPO_NAME"
+fi
+read -p "Continue? (y/n): " CONFIRM
+
+if [[ $CONFIRM != "y" && $CONFIRM != "Y" ]]; then
+    echo "Operation cancelled."
+    exit 0
+fi
+
+# Handle directory creation if needed
+if [ "$USE_CURRENT_DIR" = false ]; then
+    # Create directory for repository if it doesn't exist
+    if [ ! -d "$REPO_NAME" ]; then
+        mkdir -p "$REPO_NAME"
+    fi
+    cd "$REPO_NAME"
+fi
+
+# Create GitHub repository
+echo "Creating GitHub repository..."
+if [ -z "$REPO_DESC" ]; then
+    gh repo create "$REPO_NAME" --public
+else
+    gh repo create "$REPO_NAME" --public --description "$REPO_DESC"
+fi
+
+# Check if the directory is already a git repository
+if [ -d ".git" ]; then
+    echo "This directory is already a git repository."
+    
+    # Check if there's already a remote named origin
+    if git remote get-url origin &>/dev/null; then
+        echo "Remote 'origin' already exists. Updating it to point to the new repository."
+        git remote set-url origin "git@github.com:${GITHUB_USER}/${REPO_NAME}.git"
+    else
+        echo "Adding remote 'origin'."
+        git remote add origin "git@github.com:${GITHUB_USER}/${REPO_NAME}.git"
+    fi
+else
+    # Initialize Git repository
+    echo "Initializing local repository..."
+    git init
+    git remote add origin "git@github.com:${GITHUB_USER}/${REPO_NAME}.git"
+
+    # Create README with repository name if it doesn't exist
+    if [ ! -f "README.md" ]; then
+        echo "Creating README.md..."
+        echo "# $REPO_NAME" > README.md
+        echo "" >> README.md
+        echo "$REPO_DESC" >> README.md
+    fi
+
+    # Create .gitignore if it doesn't exist
+    if [ ! -f ".gitignore" ]; then
+        echo "Creating .gitignore..."
+        echo "# Ignore Termux specific files" > .gitignore
+        echo ".termux/" >> .gitignore
+        echo "*.log" >> .gitignore
+    fi
+fi
+
+# Check if there are any changes to commit
+if [ -n "$(git status --porcelain)" ]; then
+    # If using current directory, let user choose what to add
+    if [ "$USE_CURRENT_DIR" = true ]; then
+        echo "The following files will be added to the repository:"
+        git status --short
+        read -p "Add all files? (y/n, default: y): " ADD_ALL
+        
+        if [[ $ADD_ALL != "n" && $ADD_ALL != "N" ]]; then
+            git add .
+        else
+            echo "Please use 'git add' to stage specific files, then run 'git commit -m \"Initial commit\"' manually."
+            echo "Repository '$REPO_NAME' created but not committed or pushed."
+            echo "Repository URL: https://github.com/$GITHUB_USER/$REPO_NAME"
+            exit 0
+        fi
+    else
+        # For new directory, just add the README and .gitignore
+        git add README.md .gitignore
+    fi
+    
+    git commit -m "Initial commit"
+else
+    echo "No changes to commit."
+    
+    # Check if there are any commits
+    if ! git rev-parse HEAD &>/dev/null; then
+        echo "Creating an empty initial commit..."
+        # Create an empty commit if there are no commits yet
+        git commit --allow-empty -m "Initial commit"
+    fi
+fi
+
+# Determine the current branch name
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
+# Set the branch name to main if it's not already
+if [ "$CURRENT_BRANCH" != "main" ]; then
+    git branch -M main
+fi
+
+echo "Pushing to GitHub..."
+git push -u origin main
+
+echo "✅ Repository '$REPO_NAME' created and pushed successfully!"
+echo "Repository URL: https://github.com/$GITHUB_USER/$REPO_NAME"
